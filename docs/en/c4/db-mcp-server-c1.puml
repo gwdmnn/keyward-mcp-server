@@ -1,0 +1,31 @@
+@startuml db-mcp-server-c1
+!pragma charset UTF-8
+!include <C4/C4_Context>
+
+LAYOUT_LEFT_RIGHT()
+
+title C1 • System Context - db-mcp-server
+
+Person(operador, "Operator", "Drives the Claude Code session (single user in Phase 1); supplies the passphrase at launch and manages credentials via the db-vault CLI")
+
+System(dbmcp, "db-mcp-server", "Local MCP server (stdio) that routes access, decrypts credentials, and keeps the SSH tunnels; receives only SQL and returns only rows")
+
+System_Ext(claude, "Claude Code (MCP client)", "Consumes the tools; writes the SQL and receives the results; never sees secrets, PEM, or connection strings")
+System_Ext(postgres, "PostgreSQL databases", "Target databases per customer and environment, reached over an SSH tunnel")
+System_Ext(jump, "SSH jump hosts", "Bastions that provide access to the databases via a PEM-key tunnel")
+
+Rel(operador, claude, "Drives the session")
+Rel(operador, dbmcp, "Supplies the passphrase at launch (environment variable) and administers credentials via db-vault")
+Rel(claude, dbmcp, "Sends SQL / receives rows", "MCP stdio")
+Rel(dbmcp, jump, "Opens an SSH tunnel with the PEM key", "SSH")
+Rel(dbmcp, postgres, "Runs queries over the tunnel", "psycopg / TCP")
+
+note right of dbmcp
+  Security invariant
+  • Only SQL in, only rows out
+  • Credentials and PEM never reach Claude Code
+  • Read-only by default
+end note
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,163 @@
+@startuml db-mcp-server-c4
+!pragma charset UTF-8
+skinparam packageStyle rectangle
+
+title C4 • Code Level - db-mcp-server
+
+package "Public API (MCP tools - server.py)" {
+  class Server <<function>> {
+    +list_databases() : Catalog
+    +run_query(customer, environment, service, sql, max_rows?) : QueryResult
+    +run_write_query(customer, environment, service, sql, confirm) : WriteResult
+  }
+  class QueryResult <<struct>> {
+    +columns : list[str]
+    +rows : list[list]
+    +row_count : int
+    +truncated : bool
+  }
+  class WriteResult <<struct>> {
+    +affected_rows : int
+    +committed : bool
+  }
+  class ErrorResult <<struct>> {
+    +error_code : str
+    +message : str
+  }
+}
+
+package "Catalog (catalog.py + models.py)" {
+  class Catalog {
+    +{static} load(path) : Catalog
+    +resolve(customer, environment, service) : Resolved
+    +list_databases() : dict
+    +verify_against(vault) : VerifyReport
+  }
+  class Resolved <<struct>> {
+    +tunnel_profile : TunnelProfile
+    +tunnel_key : tuple[str, str]
+    +dbname : str
+    +secret_ref : str
+    +max_rows : int
+    +statement_timeout_ms : int
+  }
+  class TunnelProfile <<struct>> {
+    +jump_host : str
+    +jump_port : int
+    +jump_user : str
+    +pem_key : str
+    +db_host : str
+    +db_port : int
+  }
+}
+
+package "Vault and Crypto (vault.py + crypto.py)" {
+  class Vault {
+    +{static} open(path, passphrase) : Vault
+    +get(secret_ref) : Credential
+    +set(secret_ref, cred) : None
+    +remove(secret_ref) : None
+    +keys() : list[str]
+    +save(path, passphrase) : None
+  }
+  class Credential <<struct>> {
+    +user : str
+    +password : SecretStr
+  }
+  class Crypto <<function>> {
+    +derive_key(passphrase, salt, n, r, p) : bytes
+    +encrypt(plaintext, key) : dict
+    +decrypt(envelope, key) : bytes
+    +atomic_write(path, data) : None
+  }
+}
+
+package "Tunnel (tunnel_manager.py)" {
+  class TunnelManager {
+    +__init__(keys_dir, idle_timeout_s)
+    +get(tunnel_key, profile) : tuple[str, int]
+    +close_all() : None
+  }
+}
+
+package "Executor (executor.py)" {
+  class Executor <<function>> {
+    +run_read(resolved, cred, local, sql, max_rows) : QueryResult
+    +run_write(resolved, cred, local, sql, confirm) : WriteResult
+  }
+}
+
+package "Operator CLI (vault_admin.py)" {
+  class VaultAdmin <<function>> {
+    +set(secret_ref)
+    +rm(secret_ref)
+    +list()
+    +verify()
+  }
+}
+
+package "Bootstrap importer (bootstrap.py)" {
+  class Bootstrap <<function>> {
+    +main(dry_run, force)
+  }
+}
+
+Server ..> Catalog : resolve()
+Server ..> Vault : get()
+Server ..> TunnelManager : get()
+Server ..> Executor : run_read / run_write
+Server ..> QueryResult : returns
+Server ..> WriteResult : returns
+Server ..> ErrorResult : structured error
+Catalog ..> Resolved : produces
+Resolved *-- TunnelProfile
+Vault ..> Credential : returns
+Vault ..> Crypto : derives/decrypts
+Executor ..> Credential : uses
+Executor ..> Resolved : uses
+TunnelManager ..> TunnelProfile : uses
+VaultAdmin ..> Vault : set/rm/list/keys
+Bootstrap ..> Vault : writes secrets (set/save)
+Bootstrap ..> Catalog : generates registry.yaml (non-secret)
+
+note right of Crypto
+  Crypto
+  • scrypt (n=16384, r=8, p=1) → 32-byte key
+  • AES-256-GCM with a fresh random nonce on every write
+  • Tag failure ⇒ VAULT_LOCKED
+end note
+
+note right of Vault
+  Decrypt-all-at-launch
+  • open() decrypts the whole vault into memory, once
+  • get() is just a map read (no per-query crypto)
+  • Credentials reside in memory for the server's lifetime
+end note
+
+note right of Executor
+  Invariants
+  • run_read: conn.read_only = True
+  • Mutation ⇒ QUERY_READONLY_VIOLATION
+  • run_write: confirm=true ⇒ COMMIT, error ⇒ ROLLBACK
+  • statement_timeout ⇒ QUERY_TIMEOUT
+end note
+
+note right of VaultAdmin
+  Out of band
+  • Not an MCP tool; password via getpass
+  • Never passes through the model's context
+end note
+
+note right of Bootstrap
+  bootstrap.yaml split
+  • Splits into registry.yaml (non-secret) + vault.enc (sealed)
+  • secret_ref derived as customer/env/service
+  • bootstrap.yaml is plaintext, git-ignored and transient
+end note
+
+note bottom of Server
+  Documented inference: class/method signatures
+  derived from the Implementation Plan (Phase 1)
+end note
+
+@enduml

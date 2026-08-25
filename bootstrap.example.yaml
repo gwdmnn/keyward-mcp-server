@@ -1,0 +1,36 @@
+# bootstrap.example.yaml — TEMPLATE (no real secrets).
+#
+# Copy to bootstrap.yaml, fill in real values, then run:
+#   python -m db_mcp_server.bootstrap
+# It produces registry.yaml (non-secret) + vault.enc (encrypted). The real
+# bootstrap.yaml holds PLAINTEXT credentials and is git-ignored — delete it (or
+# keep it offline) once the vault is generated.
+#
+# Shape = registry.yaml + a raw user/password per service. secret_ref is derived
+# automatically as customer/env/service (do not write it here).
+
+defaults:
+  max_rows: 1000
+  statement_timeout_ms: 30000
+  tunnel_idle_timeout_s: 300
+
+customers:
+  acme:                                     # a top-level group (any name you like)
+    environments:
+      prod:
+        tunnel:
+          jump_host: 203.0.113.10           # SSH bastion host or IP
+          jump_port: 22
+          jump_user: tunnel
+          pem_key: acme-prod-bastion.pem    # private key file placed under keys/
+          db_host: db.internal.example.com  # DB host, reachable from the bastion
+          db_port: 5432
+        services:
+          orders-api:
+            dbname: orders
+            user: CHANGE_ME
+            password: CHANGE_ME
+          users-api:
+            dbname: users
+            user: CHANGE_ME
+            password: CHANGE_ME

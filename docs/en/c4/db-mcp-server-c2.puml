@@ -1,0 +1,52 @@
+@startuml db-mcp-server-c2
+!pragma charset UTF-8
+!include <C4/C4_Container>
+
+LAYOUT_TOP_DOWN()
+
+title C2 • Container - db-mcp-server
+
+Person(operador, "Operator", "Supplies the passphrase at launch and administers credentials")
+
+System_Ext(claude, "Claude Code (MCP client)", "Sends SQL, receives rows; never sees secrets")
+System_Ext(jump, "SSH jump hosts", "Bastions with access to the databases via PEM key")
+ContainerDb_Ext(postgres, "PostgreSQL databases", "PostgreSQL", "Target databases per customer and environment")
+
+System_Boundary(dbmcp, "db-mcp-server") {
+  Container(server, "MCP Server", "Python 3.11, mcp/FastMCP, stdio", "Exposes the tools list_databases, run_query and run_write_query; decrypts the whole vault into memory at launch and routes access")
+  Container(vaultcli, "db-vault (operator CLI)", "Python 3.11", "The only credential-write path into the vault; password read from a hidden prompt (getpass); not an MCP tool")
+  Container(bootstrap, "Bootstrap importer (db-bootstrap)", "Python 3.11", "Reads a single bootstrap.yaml and splits it into registry.yaml (non-secret) and vault.enc (secrets); derives secret_ref as customer/env/service")
+  ContainerDb(registry, "registry.yaml", "YAML file", "Declarative routing catalog (non-secret): tunnel and connection profiles, with a secret_ref into the vault")
+  ContainerDb(vault, "vault.enc", "Encrypted file (AES-256-GCM + scrypt)", "secret_ref → {user, password} map; decrypted in full at launch with the passphrase")
+  ContainerDb(keys, "keys/", "PEM key directory", "Jump-host private keys")
+  ContainerDb(bootstrapyaml, "bootstrap.yaml", "YAML file (plaintext, git-ignored)", "Transient importer input: registry.yaml shape with clear user/password; removed/kept offline after the vault is generated")
+}
+
+Rel(operador, server, "Supplies the passphrase at launch", "environment variable")
+Rel(operador, vaultcli, "Adds/updates/removes credentials", "hidden prompt")
+Rel(operador, bootstrap, "Runs the initial import", "terminal")
+Rel(claude, server, "Sends SQL / receives rows", "MCP stdio")
+
+Rel(server, registry, "Reads the routing catalog", "PyYAML")
+Rel(server, vault, "Decrypts the whole vault into memory at launch", "scrypt + AES-256-GCM")
+Rel(server, keys, "Reads the tunnel's PEM key")
+Rel(server, jump, "Opens/reuses an SSH tunnel", "sshtunnel")
+Rel(server, postgres, "Runs queries over the tunnel", "psycopg")
+
+Rel(vaultcli, vault, "Re-encrypts with a fresh nonce (atomic write)")
+Rel(bootstrap, bootstrapyaml, "Reads the plaintext input")
+Rel(bootstrap, registry, "Generates the catalog (no secrets)")
+Rel(bootstrap, vault, "Writes the sealed secrets")
+
+note right of server
+  MCP tools
+  • list_databases — catalog without secrets
+  • run_query — READ ONLY; run_write_query — confirm=true
+  Secrets
+  • Vault decrypted in full at launch; get() reads from memory
+  Tunnels
+  • Max 1 per (customer, environment), ephemeral 127.0.0.1 ports
+end note
+
+SHOW_LEGEND()
+@enduml

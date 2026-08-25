@@ -1,0 +1,67 @@
+@startuml db-mcp-server-c3
+!pragma charset UTF-8
+!include <C4/C4_Component>
+
+LAYOUT_TOP_DOWN()
+
+title C3 • Component - db-mcp-server (MCP Server)
+
+System_Ext(claude, "Claude Code (MCP client)", "Sends SQL, receives rows")
+System_Ext(jump, "SSH jump hosts", "Bastions with a PEM key")
+ContainerDb_Ext(postgres, "PostgreSQL databases", "PostgreSQL", "Target databases")
+ContainerDb_Ext(registry, "registry.yaml", "YAML file", "Non-secret routing catalog")
+ContainerDb_Ext(vault, "vault.enc", "Encrypted file", "secret_ref → {user, password} map")
+ContainerDb_Ext(keys, "keys/", "PEM directory", "Jump-host private keys")
+
+Container_Boundary(server, "MCP Server") {
+  Component(serverpy, "server.py", "mcp/FastMCP", "Exposes the typed tools and orchestrates the flow; converts domain errors into {error_code, message}")
+  Component(catalog, "catalog.py", "Python", "Resolves customer/environment/service → tunnel profile + {dbname, secret_ref}")
+  Component(vaultpy, "vault.py", "Python", "Decrypts the whole vault at launch and returns the credential per secret_ref via an in-memory read")
+  Component(crypto, "crypto.py", "cryptography", "Derives the key (scrypt) and decrypts/encrypts the envelope (AES-256-GCM); atomic write")
+  Component(tunnel, "tunnel_manager.py", "sshtunnel", "SSH tunnel pool per (customer, environment) on ephemeral ports")
+  Component(executor, "executor.py", "psycopg", "Opens a connection and runs: READ ONLY for run_query, confirmed read-write for run_write_query")
+}
+
+Rel(claude, serverpy, "Calls the tools", "MCP stdio")
+Rel(serverpy, catalog, "resolve(customer, env, service)")
+Rel(serverpy, vaultpy, "get(secret_ref) — in-memory read")
+Rel(serverpy, tunnel, "get(tunnel_key, profile)")
+Rel(serverpy, executor, "run_read / run_write")
+
+Rel(catalog, registry, "Parses and validates", "PyYAML")
+Rel(vaultpy, crypto, "Decrypts the vault at launch (scrypt + AES-GCM)")
+Rel(crypto, vault, "Reads the encrypted envelope")
+Rel(tunnel, keys, "Reads the PEM key")
+Rel(tunnel, jump, "Opens/reuses the tunnel", "SSH")
+Rel(executor, postgres, "Runs the SQL over the tunnel", "psycopg")
+
+note right of catalog
+  Routing
+  • Unknown target ⇒ CATALOG_NOT_FOUND
+  • Fails before any connection
+end note
+
+note right of vaultpy
+  Secrets
+  • Vault decrypted in full at launch (decrypt-all-at-launch)
+  • get() is just an in-memory map read
+  • Missing ref ⇒ SECRET_NOT_FOUND
+end note
+
+note right of tunnel
+  Tunnel reuse
+  • Max 1 per (customer, environment)
+  • Idle-timeout and close_all on shutdown
+  • Handshake failure ⇒ TUNNEL_FAILED
+end note
+
+note right of executor
+  Execution
+  • run_query in a READ ONLY transaction
+  • Mutation ⇒ QUERY_READONLY_VIOLATION
+  • run_write requires confirm=true; else WRITE_NOT_CONFIRMED
+  • max_rows sets truncated; timeout ⇒ QUERY_TIMEOUT
+end note
+
+SHOW_LEGEND()
+@enduml

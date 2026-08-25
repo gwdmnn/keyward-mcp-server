@@ -1,0 +1,29 @@
+# --- Secrets: never commit ---
+vault.enc
+vault.enc.tmp
+vault.enc.bak
+bootstrap.yaml
+keys/*
+!keys/.gitkeep
+*.env
+*.pem
+
+# --- Generated / environment-specific (produced by db-bootstrap) ---
+registry.yaml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+# root-level virtualenv (a venv was created in the project root, not under .venv/)
+/Lib/
+/Include/
+/Scripts/
+/pyvenv.cfg
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+
+docs/pt/*

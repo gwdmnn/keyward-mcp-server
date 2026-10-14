@@ -27,16 +27,16 @@ Design docs (read these before changing behavior). Available in English (`docs/e
 | `crypto.py` | scrypt KDF + AES-256-GCM; `seal`/`unseal` (FDD Contract 5 envelope), `atomic_write`. Knows nothing about vault contents or error codes. |
 | `vault.py` | `Vault.open/get/set/remove/keys/save`. **Decrypt-all-at-launch**: the whole vault is decrypted into memory once; runtime `get()` is an in-memory lookup (no per-request crypto). |
 | `catalog.py` | Parses `registry.yaml`; `resolve(customer, env, service) -> Resolved`; `list_databases()` (no secrets); `secret_refs()`. |
-| `models.py` | Pydantic: `Credential` (password is `SecretStr`), `TunnelProfile`, `Resolved`. |
+| `models.py` | Pydantic: `Credential` (password is `SecretStr`), `JumpProfile` (registry `tunnel:` block), `TunnelProfile` (jump profile + service DB host), `Resolved`. |
 | `errors.py` | `ErrorCode` enum (8 codes) + `DbMcpError(code, message)`. Messages must never contain secrets. |
 | `config.py` | Env-var/path resolution (`DB_MCP_*`) with project-root defaults. |
 | `vault_admin.py` | `db-vault` operator CLI: `set`/`rm`/`list`/`verify`. NOT an MCP tool. |
 | `bootstrap.py` | `db-bootstrap`: splits `bootstrap.yaml` (registry shape + raw creds) → `registry.yaml` + `vault.enc`. |
 | `server.py` | MCP server (FastMCP, stdio): tools `list_databases`/`run_query`/`run_write_query`; startup opens vault + warns on catalog↔vault gaps; `close_all()` on shutdown. Tool bodies delegate to `_impl` fns for testability; domain failures return `ErrorResult`, not raised. |
-| `tunnel_manager.py` | SSH tunnel pool per `(customer, env)`, ephemeral ports, `close_idle`/`close_all`, `TUNNEL_FAILED`; forwarder injectable. |
+| `tunnel_manager.py` | SSH tunnel pool per `(customer, env, db_host, db_port)`, ephemeral ports, `close_idle`/`close_all`, `TUNNEL_FAILED`; forwarder injectable. |
 | `executor.py` | psycopg; `run_read` (READ ONLY txn) vs `run_write` (confirm-gated); `_connect` is the test seam. |
 
-Routing model: **one SSH tunnel pooled per `(customer, environment)`**, shared by all its services; only `dbname` changes per service.
+Routing model: `db_host`/`db_port` are set **per service** in `registry.yaml` (a customer's databases may be split across hosts); the env's `tunnel:` block holds only the SSH jump-host settings. **One SSH tunnel is pooled per `(customer, environment, db_host, db_port)`**, shared by all services on that host.
 
 ## Conventions
 

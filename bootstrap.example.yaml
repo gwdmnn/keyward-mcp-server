@@ -23,14 +23,16 @@ customers:
           jump_port: 22
           jump_user: tunnel
           pem_key: acme-prod-bastion.pem    # private key file placed under keys/
-          db_host: db.internal.example.com  # DB host, reachable from the bastion
-          db_port: 5432
         services:
           orders-api:
             dbname: orders
+            db_host: orders-db.internal.example.com  # DB host, reachable from the bastion
+            db_port: 5432
             user: CHANGE_ME
             password: CHANGE_ME
           users-api:
             dbname: users
+            db_host: users-db.internal.example.com
+            db_port: 5432
             user: CHANGE_ME
             password: CHANGE_ME

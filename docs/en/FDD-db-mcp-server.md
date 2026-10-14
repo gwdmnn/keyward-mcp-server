@@ -36,7 +36,7 @@ The most serious consequence is **not** the local disk: it is that **every crede
 - **Explicit, deliberate writes.** Mutations happen only through `run_write_query` with explicit per-call confirmation. *Invariant:* `confirm != true` ⇒ no read-write transaction is opened.
 - **Correct routing per customer.** `customer`/`environment`/`service` are resolved against the catalog; an unknown identifier fails immediately, before any connection. *Measure:* `CATALOG_NOT_FOUND` error with no side effects.
 - **Out-of-band credential writes.** Adding/updating a credential in the vault **never** goes through an MCP tool (hence never through the model's context); it is an operator action via a dedicated CLI, with the password read from a hidden prompt. *Invariant:* no path Claude touches ever receives `user`/`password` in clear.
-- **Efficient tunnel reuse.** At most one active SSH tunnel per `(customer, environment)`, shared by all of that customer's services. *Measure:* number of open tunnels ≤ number of distinct `(customer, environment)` pairs in use.
+- **Efficient tunnel reuse.** At most one active SSH tunnel per `(customer, environment, db_host, db_port)`, shared by all of that environment's services on the same DB host (a customer's databases may be split across hosts). *Measure:* number of open tunnels ≤ number of distinct `(customer, environment, db_host, db_port)` endpoints in use.
 
 ---
 
@@ -46,7 +46,7 @@ The most serious consequence is **not** the local disk: it is that **every crede
 - A Python stdio MCP server with the tools `list_databases`, `run_query`, `run_write_query`.
 - A declarative **catalog** (`registry.yaml`) with tunnel and connection profiles (non-secret).
 - A local encrypted **vault** (AES-256-GCM + scrypt) mapping `secret_ref → {user, password}`.
-- A native **TunnelManager** (the `sshtunnel` library), pooled per `(customer, environment)`, with ephemeral ports on `127.0.0.1`, and teardown on idle-timeout and shutdown.
+- A native **TunnelManager** (the `sshtunnel` library), pooled per `(customer, environment, db_host, db_port)`, with ephemeral ports on `127.0.0.1`, and teardown on idle-timeout and shutdown.
 - **Read-only enforcement** via a Postgres transaction; a separate, confirmed write path.
 - A **row limit** per query (`max_rows`, configurable default) with a `truncated` flag.
 - **Bootstrap importer** (`bootstrap.py`): reads a single `bootstrap.yaml` (same shape as `registry.yaml`, but with plaintext `user`/`password` per service) and splits it into `registry.yaml` (non-secret) and the vault (secrets). `secret_ref` is derived as `customer/env/service`. `bootstrap.yaml` is git-ignored and should be removed/kept offline once the vault is generated.
@@ -66,8 +66,8 @@ The most serious consequence is **not** the local disk: it is that **every crede
 
 **Main flow — read (`run_query`)**
 1. Claude calls `run_query(customer, environment, service, sql, max_rows?)`.
-2. The **catalog** resolves `(customer, environment)` → tunnel profile and `(…, service)` → `{ dbname, secret_ref }`. Failure ⇒ `CATALOG_NOT_FOUND`.
-3. The **TunnelManager** obtains the tunnel for `(customer, environment)`: reuses it if active, otherwise opens one over SSH (PEM key) and binds `127.0.0.1:<ephemeral-port>`.
+2. The **catalog** resolves `(customer, environment)` → jump-host profile and `(…, service)` → `{ dbname, db_host, db_port, secret_ref }`. Failure ⇒ `CATALOG_NOT_FOUND`.
+3. The **TunnelManager** obtains the tunnel for `(customer, environment, db_host, db_port)`: reuses it if active, otherwise opens one over SSH (PEM key) and binds `127.0.0.1:<ephemeral-port>`.
 4. The **vault** returns the credential for `secret_ref` — just a **read from the already-decrypted in-memory map**. `vault.enc` is decrypted in full **once, at launch** (scrypt + AES-256-GCM); there is no per-query decryption.
 5. Opens a psycopg connection to `127.0.0.1:<port>/dbname`, starts a `READ ONLY` transaction, runs `sql`.
 6. Applies `max_rows`; returns `{ columns, rows, row_count, truncated }`. The psycopg connection is closed; the credentials stay in the in-memory map for the server's lifetime (a Phase 1 decision — see note below).
@@ -83,7 +83,7 @@ The most serious consequence is **not** the local disk: it is that **every crede
 3. Reads `user` (visible) and `password` (**hidden prompt, `getpass`**); neither is echoed, logged, or passed as a command-line argument.
 4. Updates the map entry; **re-encrypts with a fresh random nonce** (never reuses the previous nonce — an AES-GCM requirement).
 5. **Atomic write**: writes `vault.enc.tmp` and does `os.replace` over `vault.enc`, avoiding corruption of the single copy on failure.
-6. The operator adds the **routing** half in `registry.yaml` (`dbname` + `secret_ref`; and, if `(customer, environment)` is new, the `tunnel` block + the PEM in `keys/`) — the non-secret part, editable by hand or by Claude.
+6. The operator adds the **routing** half in `registry.yaml` (`dbname` + `db_host`/`db_port` + `secret_ref`; and, if `(customer, environment)` is new, the `tunnel` block + the PEM in `keys/`) — the non-secret part, editable by hand or by Claude.
 7. **Restarts the MCP server** (or uses a future `reload`): the vault is decrypted into memory at launch, so a new `secret_ref` only exists after the re-read.
 
 **Alternative flows and exceptions**
@@ -112,7 +112,7 @@ sequenceDiagram
     C->>S: run_query(customer, env, service, sql)
     S->>Cat: resolve(customer, env, service)
     Cat-->>S: {tunnel_profile, dbname, secret_ref}
-    S->>T: get_tunnel(customer, env)
+    S->>T: get_tunnel(customer, env, db_host, db_port)
     alt tunnel already active
         T-->>S: 127.0.0.1:port
     else open a new one
@@ -131,7 +131,7 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Closed
-    Closed --> Opening: 1st query for (customer, env)
+    Closed --> Opening: 1st query for (customer, env, db_host, db_port)
     Opening --> Active: bind 127.0.0.1:port OK
     Opening --> Closed: TUNNEL_FAILED
     Active --> Active: query reuses tunnel
@@ -254,14 +254,16 @@ customers:
           jump_port: 22
           jump_user: tunnel
           pem_key: acme-live-bastion.pem   # resolved under keys_dir
-          db_host: db.internal.example.com
-          db_port: 5432
         services:
           orders-api:
             dbname: orders
+            db_host: orders-db.internal.example.com   # DB host is per service
+            db_port: 5432
             secret_ref: acme/live/orders-api
           users-api:
             dbname: users
+            db_host: users-db.internal.example.com
+            db_port: 5432
             secret_ref: acme/live/users-api
 ```
 

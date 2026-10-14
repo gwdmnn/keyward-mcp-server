@@ -35,7 +35,7 @@ package "Catalog (catalog.py + models.py)" {
   }
   class Resolved <<struct>> {
     +tunnel_profile : TunnelProfile
-    +tunnel_key : tuple[str, str]
+    +tunnel_key : tuple[str, str, str, int]
     +dbname : str
     +secret_ref : str
     +max_rows : int
@@ -46,8 +46,8 @@ package "Catalog (catalog.py + models.py)" {
     +jump_port : int
     +jump_user : str
     +pem_key : str
-    +db_host : str
-    +db_port : int
+    +db_host : str  ' from the service
+    +db_port : int  ' from the service
   }
 }
 

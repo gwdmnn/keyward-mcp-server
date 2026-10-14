@@ -22,17 +22,27 @@ class Credential(BaseModel):
     password: SecretStr
 
 
-class TunnelProfile(BaseModel):
-    """Non-secret SSH-tunnel endpoint for one ``(customer, environment)``.
+class JumpProfile(BaseModel):
+    """Non-secret SSH jump-host settings for one ``(customer, environment)``.
 
-    The PEM key is referenced by filename (resolved under ``keys/``), never by
-    contents — the key material stays out of the catalog and out of memory here.
+    This is the ``tunnel:`` block of ``registry.yaml``. The PEM key is referenced
+    by filename (resolved under ``keys/``), never by contents — the key material
+    stays out of the catalog and out of memory here.
     """
 
     jump_host: str
     jump_port: int = 22
     jump_user: str
     pem_key: str
+
+
+class TunnelProfile(JumpProfile):
+    """A full tunnel endpoint: the environment's jump host + one service's DB host.
+
+    Assembled by ``Catalog.resolve`` — the DB host lives at the service level so a
+    customer's databases can be split across several hosts.
+    """
+
     db_host: str
     db_port: int = 5432
 
@@ -45,7 +55,7 @@ class Resolved(BaseModel):
     """
 
     tunnel_profile: TunnelProfile
-    tunnel_key: tuple[str, str]
+    tunnel_key: tuple[str, str, str, int]
     dbname: str
     secret_ref: str
     max_rows: int

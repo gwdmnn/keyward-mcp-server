@@ -23,7 +23,7 @@ from db_mcp_server.models import Credential, Resolved, TunnelProfile
 
 RESOLVED = Resolved(
     tunnel_profile=TunnelProfile(jump_host="h", jump_user="u", pem_key="k.pem", db_host="db"),
-    tunnel_key=("c", "live"),
+    tunnel_key=("c", "live", "db", 5432),
     dbname="d",
     secret_ref="c/live/s",
     max_rows=1000,

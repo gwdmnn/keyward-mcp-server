@@ -23,13 +23,14 @@ REGISTRY_YAML = textwrap.dedent(
               jump_host: h
               jump_user: u
               pem_key: k.pem
-              db_host: db
             services:
               pessoa-api:
                 dbname: pessoa_api
+                db_host: db
                 secret_ref: prefmaringa/live/pessoa-api
               cadastro-cliente-api:
                 dbname: cadastro_cliente_api
+                db_host: db
                 secret_ref: prefmaringa/live/cadastro-cliente-api
     """
 )

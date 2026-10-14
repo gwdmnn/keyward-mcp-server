@@ -14,7 +14,7 @@ db-mcp-server is a local MCP server (Python, stdio transport) that gives Claude 
 ### Internal processes
 - `server.py` exposes the tools via FastMCP and orchestrates the flow.
 - `catalog.py` resolves `customer`/`environment`/`service` from `registry.yaml`.
-- `tunnel_manager.py` keeps a tunnel pool per `(customer, environment)` with ephemeral ports.
+- `tunnel_manager.py` keeps a tunnel pool per `(customer, environment, db_host, db_port)` with ephemeral ports.
 - `vault.py` decrypts the vault into memory at launch and returns credentials by `secret_ref`.
 - `crypto.py` derives the key (scrypt) and seals/decrypts (AES-256-GCM) with an atomic write.
 - `executor.py` opens a psycopg connection and runs in read-only or confirmed read-write mode.
@@ -23,7 +23,7 @@ db-mcp-server is a local MCP server (Python, stdio transport) that gives Claude 
 ### Behavioral variations
 - `run_query` always in a `READ ONLY` transaction; a mutation is rejected by the engine.
 - `run_write_query` opens a read-write transaction only with `confirm=true`.
-- A tunnel is reused if active, or opened on demand on the first query for the `(customer, environment)` pair.
+- A tunnel is reused if active, or opened on demand on the first query for the `(customer, environment, db_host, db_port)` endpoint.
 
 ### Public contracts
 - MCP tools: `list_databases`, `run_query`, `run_write_query`.
@@ -147,7 +147,7 @@ flowchart TD
 
 ### Tunnel lifecycle
 
-This state diagram represents the lifecycle of an SSH tunnel managed by `tunnel_manager.py` for each `(customer, environment)` pair. It shows the on-demand opening on the first query, reuse while active, and closing on idle-timeout or shutdown. Use it to understand the at-most-one-tunnel-per-customer-and-environment policy and how open failures are handled. It is essential to the efficient-tunnel-reuse goal.
+This state diagram represents the lifecycle of an SSH tunnel managed by `tunnel_manager.py` for each `(customer, environment, db_host, db_port)` endpoint. It shows the on-demand opening on the first query, reuse while active, and closing on idle-timeout or shutdown. Use it to understand the at-most-one-tunnel-per-customer-environment-and-DB-host policy and how open failures are handled. It is essential to the efficient-tunnel-reuse goal.
 
 ```mermaid
 stateDiagram-v2
@@ -160,7 +160,7 @@ stateDiagram-v2
 ```
 
 **Notes**:
-- A tunnel is shared by all services of the same `(customer, environment)`.
+- A tunnel is shared by all services of the same `(customer, environment)` that use the same DB host.
 - The local port is ephemeral on `127.0.0.1`, obtained with `local_bind_address=('127.0.0.1', 0)`.
 - After idle-timeout the tunnel is closed; the next query transparently reopens it.
 
@@ -280,8 +280,8 @@ classDiagram
         +jump_host str
         +jump_port int
         +pem_key str
-        +db_host str
-        +db_port int
+        +db_host str (from service)
+        +db_port int (from service)
     }
     class Credential {
         +user str

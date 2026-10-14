@@ -46,7 +46,7 @@ db-mcp-server/
 │   ├── crypto.py                 # scrypt KDF + AES-GCM encrypt/decrypt + atomic write
 │   ├── vault.py                  # Vault: load/decrypt into memory, get(secret_ref)
 │   ├── catalog.py                # Catalog: parse registry.yaml, resolve()
-│   ├── tunnel_manager.py         # tunnel pool per (customer, env)
+│   ├── tunnel_manager.py         # tunnel pool per (customer, env, db_host, db_port)
 │   ├── executor.py               # opens psycopg connection, read-only/read-write, run
 │   ├── server.py                 # FastMCP: tools list_databases/run_query/run_write_query
 │   ├── vault_admin.py            # CLI: set/rm/list/verify (FDD Contract 7)
@@ -90,7 +90,7 @@ The order is bottom-up: each layer is testable in isolation before being plugged
 - `Catalog.load(path) -> Catalog` (YAML parse + Pydantic validation; defaults applied).
 - `Catalog.resolve(customer, env, service) -> Resolved{tunnel_profile, dbname, secret_ref, max_rows, statement_timeout_ms}` (error → `CATALOG_NOT_FOUND`).
 - `Catalog.list_databases() -> Catalog(view with no secrets)` for the tool of the same name.
-- `Catalog.tunnel_key(customer, env) -> (customer, env)`.
+- `Catalog.tunnel_key(customer, env, db_host, db_port) -> (customer, env, db_host, db_port)`.
 - **Acceptance (test_catalog):** resolve of a valid target; `CATALOG_NOT_FOUND` for unknown customer/env/service; `list_databases` contains no `secret_ref`, jump host, or PEM.
 
 ### M4 — Admin CLI (`vault_admin.py`) — Contract 7
@@ -99,7 +99,7 @@ The order is bottom-up: each layer is testable in isolation before being plugged
 - **Acceptance:** `set` writes and is read back by `Vault.open`; `list` shows keys only; `verify` reports `missing_in_vault`/`orphan_in_vault`; the password does not appear in `ps`/history (read via getpass).
 
 ### M5 — Tunnel manager (`tunnel_manager.py`)
-- `TunnelManager.get(tunnel_profile) -> (host, port)`: reuses an active tunnel per `(customer, env)`, otherwise opens `SSHTunnelForwarder` with `ssh_pkey=keys/<pem>`, `remote_bind_address=(db_host, db_port)`, `local_bind_address=('127.0.0.1', 0)`; returns `local_bind_port`.
+- `TunnelManager.get(tunnel_profile) -> (host, port)`: reuses an active tunnel per `(customer, env, db_host, db_port)`, otherwise opens `SSHTunnelForwarder` with `ssh_pkey=keys/<pem>`, `remote_bind_address=(db_host, db_port)`, `local_bind_address=('127.0.0.1', 0)`; returns `local_bind_port`.
 - Idle-timeout (thread/timer) and `close_all()` on shutdown. Handshake error → `TUNNEL_FAILED`.
 - **Acceptance (test_tunnel_manager, with mocked SSH):** reuse does not open a 2nd tunnel for the same key; a connection failure becomes `TUNNEL_FAILED`; `close_all` shuts everything down. *(A real test against a jump host stays a manual verification — see §5.)*
 
@@ -133,8 +133,9 @@ The order is bottom-up: each layer is testable in isolation before being plugged
 ```python
 # models.py
 class Credential(BaseModel): user: str; password: SecretStr
-class TunnelProfile(BaseModel): jump_host: str; jump_port: int; jump_user: str; pem_key: str; db_host: str; db_port: int
-class Resolved(BaseModel): tunnel_profile: TunnelProfile; tunnel_key: tuple[str, str]; dbname: str; secret_ref: str; max_rows: int; statement_timeout_ms: int
+class JumpProfile(BaseModel): jump_host: str; jump_port: int; jump_user: str; pem_key: str   # registry `tunnel:` block
+class TunnelProfile(JumpProfile): db_host: str; db_port: int   # + the service's DB host, built by Catalog.resolve
+class Resolved(BaseModel): tunnel_profile: TunnelProfile; tunnel_key: tuple[str, str, str, int]; dbname: str; secret_ref: str; max_rows: int; statement_timeout_ms: int
 class QueryResult(BaseModel): columns: list[str]; rows: list[list]; row_count: int; truncated: bool
 class WriteResult(BaseModel): affected_rows: int; committed: bool
 class ErrorResult(BaseModel): error_code: str; message: str
@@ -166,7 +167,7 @@ class Catalog:
 # tunnel_manager.py
 class TunnelManager:
     def __init__(self, keys_dir: Path, idle_timeout_s: int)
-    def get(self, tunnel_key: tuple[str, str], profile: TunnelProfile) -> tuple[str, int]  # raise TUNNEL_FAILED
+    def get(self, tunnel_key: tuple[str, str, str, int], profile: TunnelProfile) -> tuple[str, int]  # raise TUNNEL_FAILED
     def close_all(self) -> None
 
 # executor.py

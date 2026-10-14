@@ -2,9 +2,10 @@
 
 Parses ``registry.yaml`` — the non-secret source of truth that replaces the
 markdown mapping table and the scattered ``.env`` files (FDD Contract 4). It maps
-``(customer, environment)`` to a tunnel profile and ``(customer, environment,
-service)`` to a ``dbname`` + ``secret_ref``. It holds NO secrets: only a
-reference (``secret_ref``) into the vault.
+``(customer, environment)`` to a jump-host profile and ``(customer, environment,
+service)`` to a ``dbname`` + DB host/port + ``secret_ref``. The DB host is set per
+service because some customers split their databases across several hosts. It
+holds NO secrets: only a reference (``secret_ref``) into the vault.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from .errors import DbMcpError, ErrorCode
-from .models import Resolved, TunnelProfile
+from .models import JumpProfile, Resolved, TunnelProfile
 
 
 # --- Parsed shape of registry.yaml (internal to this module) ---
@@ -27,11 +28,13 @@ class Defaults(BaseModel):
 
 class ServiceProfile(BaseModel):
     dbname: str
+    db_host: str
+    db_port: int = 5432
     secret_ref: str
 
 
 class EnvironmentProfile(BaseModel):
-    tunnel: TunnelProfile
+    tunnel: JumpProfile
     services: dict[str, ServiceProfile]
 
 
@@ -66,8 +69,10 @@ class Catalog:
         return self._registry.defaults
 
     @staticmethod
-    def tunnel_key(customer: str, environment: str) -> tuple[str, str]:
-        return (customer, environment)
+    def tunnel_key(
+        customer: str, environment: str, db_host: str, db_port: int
+    ) -> tuple[str, str, str, int]:
+        return (customer, environment, db_host, db_port)
 
     def resolve(self, customer: str, environment: str, service: str) -> Resolved:
         """Resolve a target to everything needed to run a query.
@@ -95,8 +100,10 @@ class Catalog:
 
         d = self._registry.defaults
         return Resolved(
-            tunnel_profile=env.tunnel,
-            tunnel_key=self.tunnel_key(customer, environment),
+            tunnel_profile=TunnelProfile(
+                **env.tunnel.model_dump(), db_host=svc.db_host, db_port=svc.db_port
+            ),
+            tunnel_key=self.tunnel_key(customer, environment, svc.db_host, svc.db_port),
             dbname=svc.dbname,
             secret_ref=svc.secret_ref,
             max_rows=d.max_rows,

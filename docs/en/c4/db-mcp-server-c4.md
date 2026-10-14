@@ -30,7 +30,7 @@ This is the English rendering of the diagram set (the source diagrams under `doc
 - **Decrypt-all-at-launch** (§4, step 4 and "Note — in-memory credential residency"): `vault.enc` is decrypted in full once at launch (scrypt + AES-256-GCM); at runtime `vault.get()` is just a read of the already-decrypted in-memory map; credentials reside in memory for the server's lifetime.
 - **Tools & contracts** (§5): signatures and schemas of `list_databases`, `run_query`, `run_write_query`; the `error_code` enum; the `registry.yaml` and `vault.enc` formats; the `mcpServers` launch block.
 - **Error enum** (§5): CATALOG_NOT_FOUND, VAULT_LOCKED, TUNNEL_FAILED, QUERY_READONLY_VIOLATION, WRITE_NOT_CONFIRMED, QUERY_TIMEOUT, SECRET_NOT_FOUND, DB_ERROR.
-- **Tunnel policy** (§2/§3): at most one tunnel per `(customer, environment)`, ephemeral ports on `127.0.0.1`, idle-timeout and teardown on shutdown.
+- **Tunnel policy** (§2/§3): at most one tunnel per `(customer, environment, db_host, db_port)`, ephemeral ports on `127.0.0.1`, idle-timeout and teardown on shutdown.
 
 ### Inferences Made
 - **Internal components of the MCP server** (`server.py`, `catalog.py`, `vault.py`, `crypto.py`, `tunnel_manager.py`, `executor.py`) and their responsibilities: taken from the Implementation Plan (§2 File structure, §3 Milestones). The FDD names these responsibilities functionally in §4 (Catalog, Vault, TunnelManager, read-only execution) but the module split is from the plan. Used for C3/C4.

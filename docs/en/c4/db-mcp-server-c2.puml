@@ -45,7 +45,7 @@ note right of server
   Secrets
   • Vault decrypted in full at launch; get() reads from memory
   Tunnels
-  • Max 1 per (customer, environment), ephemeral 127.0.0.1 ports
+  • Max 1 per (customer, environment, db host), ephemeral 127.0.0.1 ports
 end note
 
 SHOW_LEGEND()

@@ -3,7 +3,8 @@
 Reads a single ``bootstrap.yaml`` and splits it into the two files the server
 uses:
 
-  * ``registry.yaml`` — non-secret routing (tunnel profiles + dbname + secret_ref)
+  * ``registry.yaml`` — non-secret routing (jump-host profiles + dbname + DB
+    host/port + secret_ref)
   * ``vault.enc``     — the credentials, sealed with the passphrase
 
 ``bootstrap.yaml`` has the same shape as ``registry.yaml`` but each service also
@@ -28,7 +29,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from . import config
-from .models import Credential, TunnelProfile
+from .models import Credential, JumpProfile
 from .vault import Vault
 
 
@@ -41,12 +42,14 @@ class BootstrapDefaults(BaseModel):
 
 class BootstrapService(BaseModel):
     dbname: str
+    db_host: str
+    db_port: int = 5432
     user: str
     password: str
 
 
 class BootstrapEnvironment(BaseModel):
-    tunnel: TunnelProfile
+    tunnel: JumpProfile
     services: dict[str, BootstrapService]
 
 
@@ -85,7 +88,12 @@ def build(bootstrap_data: dict) -> tuple[dict, dict, Report]:
             services_out: dict = {}
             for sname, svc in env.services.items():
                 ref = f"{cname}/{ename}/{sname}"
-                services_out[sname] = {"dbname": svc.dbname, "secret_ref": ref}
+                services_out[sname] = {
+                    "dbname": svc.dbname,
+                    "db_host": svc.db_host,
+                    "db_port": svc.db_port,
+                    "secret_ref": ref,
+                }
                 secrets[ref] = {"user": svc.user, "password": svc.password}
                 report.secret_refs.append(ref)
             env_out[ename] = {"tunnel": env.tunnel.model_dump(), "services": services_out}

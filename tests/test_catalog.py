@@ -27,14 +27,16 @@ REGISTRY_YAML = textwrap.dedent(
               jump_port: 22
               jump_user: maringa-tunnel
               pem_key: maida-maringa-bastion-key.pem
-              db_host: maringa-db-live.maida.health
-              db_port: 5432
             services:
               pessoa-api:
                 dbname: pessoa_api
+                db_host: maringa-db-live.maida.health
+                db_port: 5432
                 secret_ref: prefmaringa/live/pessoa-api
               cadastro-cliente-api:
                 dbname: cadastro_cliente_api
+                db_host: maringa-db-live-2.maida.health
+                db_port: 5433
                 secret_ref: prefmaringa/live/cadastro-cliente-api
     """
 )
@@ -51,7 +53,7 @@ def test_resolve_valid_target(catalog):
     r = catalog.resolve("prefmaringa", "live", "pessoa-api")
     assert r.dbname == "pessoa_api"
     assert r.secret_ref == "prefmaringa/live/pessoa-api"
-    assert r.tunnel_key == ("prefmaringa", "live")
+    assert r.tunnel_key == ("prefmaringa", "live", "maringa-db-live.maida.health", 5432)
     assert r.tunnel_profile.db_host == "maringa-db-live.maida.health"
     assert r.tunnel_profile.pem_key == "maida-maringa-bastion-key.pem"
     # defaults flow through
@@ -103,6 +105,7 @@ def test_list_databases_leaks_no_secrets(catalog):
         "maringa-tunnel",               # jump user
         "maida-maringa-bastion-key.pem",  # PEM filename
         "maringa-db-live.maida.health",   # db host
+        "maringa-db-live-2.maida.health", # db host (split)
     ):
         assert forbidden not in blob
 
@@ -125,10 +128,10 @@ def test_defaults_applied_when_absent(tmp_path):
                   jump_host: h
                   jump_user: u
                   pem_key: k.pem
-                  db_host: db
                 services:
                   s1:
                     dbname: d1
+                    db_host: db
                     secret_ref: c1/live/s1
         """
     )
@@ -141,3 +144,53 @@ def test_defaults_applied_when_absent(tmp_path):
     assert r.statement_timeout_ms == 30000
     assert r.tunnel_profile.jump_port == 22
     assert r.tunnel_profile.db_port == 5432
+
+
+def test_db_host_is_resolved_per_service(catalog):
+    pessoa = catalog.resolve("prefmaringa", "live", "pessoa-api")
+    cadastro = catalog.resolve("prefmaringa", "live", "cadastro-cliente-api")
+    # same jump host, different DB hosts => separate tunnels
+    assert pessoa.tunnel_profile.jump_host == cadastro.tunnel_profile.jump_host
+    assert cadastro.tunnel_profile.db_host == "maringa-db-live-2.maida.health"
+    assert cadastro.tunnel_profile.db_port == 5433
+    assert pessoa.tunnel_key != cadastro.tunnel_key
+
+
+def test_services_on_same_host_share_tunnel_key(tmp_path):
+    shared = textwrap.dedent(
+        """
+        customers:
+          c1:
+            environments:
+              live:
+                tunnel: {jump_host: h, jump_user: u, pem_key: k.pem}
+                services:
+                  s1: {dbname: d1, db_host: db, secret_ref: c1/live/s1}
+                  s2: {dbname: d2, db_host: db, secret_ref: c1/live/s2}
+        """
+    )
+    path = tmp_path / "registry.yaml"
+    path.write_text(shared, encoding="utf-8")
+    cat = Catalog.load(path)
+    assert cat.resolve("c1", "live", "s1").tunnel_key == cat.resolve("c1", "live", "s2").tunnel_key
+
+
+def test_service_without_db_host_is_rejected(tmp_path):
+    from pydantic import ValidationError
+
+    # old format: db_host on the tunnel, not on the service
+    old = textwrap.dedent(
+        """
+        customers:
+          c1:
+            environments:
+              live:
+                tunnel: {jump_host: h, jump_user: u, pem_key: k.pem, db_host: db}
+                services:
+                  s1: {dbname: d1, secret_ref: c1/live/s1}
+        """
+    )
+    path = tmp_path / "registry.yaml"
+    path.write_text(old, encoding="utf-8")
+    with pytest.raises(ValidationError):
+        Catalog.load(path)

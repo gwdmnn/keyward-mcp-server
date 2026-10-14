@@ -31,15 +31,16 @@ BOOTSTRAP_YAML = textwrap.dedent(
               jump_port: 22
               jump_user: maringa-tunnel
               pem_key: maida-maringa-bastion-key.pem
-              db_host: maringa-db-live.maida.health
-              db_port: 5432
             services:
               pessoa-api:
                 dbname: sama_pessoa_api
+                db_host: maringa-db-live.maida.health
+                db_port: 5432
                 user: svc_pessoa
                 password: pw_pessoa
               cadastro-cliente-api:
                 dbname: sama_cadastro_cliente_api
+                db_host: maringa-db-live-2.maida.health
                 user: svc_cad
                 password: pw_cad
     """
@@ -62,12 +63,26 @@ def test_build_derives_secret_refs_and_strips_credentials():
     assert report.customers == 1 and report.environments == 1
 
     svc = registry["customers"]["prefmaringa"]["environments"]["live"]["services"]["pessoa-api"]
-    assert svc == {"dbname": "sama_pessoa_api", "secret_ref": "prefmaringa/live/pessoa-api"}
+    assert svc == {
+        "dbname": "sama_pessoa_api",
+        "db_host": "maringa-db-live.maida.health",
+        "db_port": 5432,
+        "secret_ref": "prefmaringa/live/pessoa-api",
+    }
     # registry carries NO credentials anywhere
     assert "user" not in svc and "password" not in svc
 
     assert secrets["prefmaringa/live/pessoa-api"] == {"user": "svc_pessoa", "password": "pw_pessoa"}
     assert registry["defaults"]["max_rows"] == 500
+
+
+def test_build_puts_db_host_on_services_not_tunnel():
+    registry, _secrets, _report = bootstrap.build(_data())
+    env = registry["customers"]["prefmaringa"]["environments"]["live"]
+    assert "db_host" not in env["tunnel"] and "db_port" not in env["tunnel"]
+    cad = env["services"]["cadastro-cliente-api"]
+    assert cad["db_host"] == "maringa-db-live-2.maida.health"
+    assert cad["db_port"] == 5432  # default when omitted
 
 
 def test_registry_has_no_plaintext_credentials():

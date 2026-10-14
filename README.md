@@ -19,7 +19,7 @@ exposes a small SQL-only tool surface, and defaults to read-only.
   a `secret_ref` (a pointer into the vault — never a credential).
 - **Vault** (`vault.enc`) — AES-256-GCM with a scrypt-derived key. Holds the DB
   credentials, decrypted into memory once at launch using a passphrase.
-- **Tunnel pool** — one SSH tunnel per `(customer, environment)` via `sshtunnel`,
+- **Tunnel pool** — one SSH tunnel per `(customer, environment, db_host)` via `sshtunnel`,
   bound to an ephemeral `127.0.0.1` port.
 - **Executor** — `psycopg`. `run_query` runs in a Postgres **READ ONLY**
   transaction (the engine rejects any write); `run_write_query` requires

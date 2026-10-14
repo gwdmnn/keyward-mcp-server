@@ -1,7 +1,8 @@
 """SSH tunnel pool (milestone M5).
 
-One tunnel is pooled per ``(customer, environment)`` and shared by all of that
-customer's services (they reach the same DB host, only the dbname differs). Each
+One tunnel is pooled per ``(customer, environment, db_host, db_port)`` and shared
+by all of that environment's services on the same DB host (only the dbname
+differs); services on a different host get their own tunnel. Each
 tunnel binds to an ephemeral ``127.0.0.1`` port chosen by the OS, so many
 customers can be active at once without port collisions.
 
@@ -58,7 +59,7 @@ class TunnelManager:
         self._new_forwarder = forwarder_factory or self._default_forwarder
         self._clock = clock
         self._lock = threading.Lock()
-        self._pool: dict[tuple[str, str], _Entry] = {}
+        self._pool: dict[tuple[str, str, str, int], _Entry] = {}
 
     def _default_forwarder(self, profile: TunnelProfile) -> object:
         # sshtunnel 0.4 references paramiko.DSSKey, which paramiko 3.x removed
@@ -79,7 +80,7 @@ class TunnelManager:
             local_bind_address=(_LOCAL_HOST, 0),  # 0 => OS picks an ephemeral port
         )
 
-    def get(self, tunnel_key: tuple[str, str], profile: TunnelProfile) -> tuple[str, int]:
+    def get(self, tunnel_key: tuple[str, str, str, int], profile: TunnelProfile) -> tuple[str, int]:
         """Return ``(host, port)`` of a live tunnel for ``tunnel_key``.
 
         Reuses an active tunnel; a stale one is dropped and reopened. Raises

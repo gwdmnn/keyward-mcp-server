@@ -18,7 +18,7 @@ Container_Boundary(server, "MCP Server") {
   Component(catalog, "catalog.py", "Python", "Resolves customer/environment/service → tunnel profile + {dbname, secret_ref}")
   Component(vaultpy, "vault.py", "Python", "Decrypts the whole vault at launch and returns the credential per secret_ref via an in-memory read")
   Component(crypto, "crypto.py", "cryptography", "Derives the key (scrypt) and decrypts/encrypts the envelope (AES-256-GCM); atomic write")
-  Component(tunnel, "tunnel_manager.py", "sshtunnel", "SSH tunnel pool per (customer, environment) on ephemeral ports")
+  Component(tunnel, "tunnel_manager.py", "sshtunnel", "SSH tunnel pool per (customer, environment, db host) on ephemeral ports")
   Component(executor, "executor.py", "psycopg", "Opens a connection and runs: READ ONLY for run_query, confirmed read-write for run_write_query")
 }
 
@@ -50,7 +50,7 @@ end note
 
 note right of tunnel
   Tunnel reuse
-  • Max 1 per (customer, environment)
+  • Max 1 per (customer, environment, db host)
   • Idle-timeout and close_all on shutdown
   • Handshake failure ⇒ TUNNEL_FAILED
 end note

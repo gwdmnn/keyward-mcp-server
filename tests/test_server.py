@@ -29,13 +29,14 @@ REGISTRY = textwrap.dedent(
               jump_host: h
               jump_user: u
               pem_key: k.pem
-              db_host: db
             services:
               pessoa-api:
                 dbname: pessoa_api
+                db_host: db
                 secret_ref: prefmaringa/live/pessoa-api
               cadastro-cliente-api:
                 dbname: cadastro_cliente_api
+                db_host: db
                 secret_ref: prefmaringa/live/cadastro-cliente-api
     """
 )
@@ -138,6 +139,45 @@ def test_run_write_success(wired, monkeypatch):
     monkeypatch.setattr(executor, "_connect", lambda *a, **k: FakeConn(FakeCursor(rowcount=5)))
     res = server._run_write_query("prefmaringa", "live", "pessoa-api", "UPDATE t SET x=1", True)
     assert isinstance(res, WriteResult) and res.affected_rows == 5 and res.committed is True
+
+
+def test_services_on_different_db_hosts_use_separate_tunnels(tmp_path, monkeypatch):
+    reg = tmp_path / "registry.yaml"
+    reg.write_text(
+        textwrap.dedent(
+            """
+            customers:
+              c1:
+                environments:
+                  staging:
+                    tunnel: {jump_host: h, jump_user: u, pem_key: k.pem}
+                    services:
+                      a-api: {dbname: a, db_host: db-a, secret_ref: c1/staging/a-api}
+                      b-api: {dbname: b, db_host: db-b, secret_ref: c1/staging/b-api}
+                      c-api: {dbname: c, db_host: db-a, secret_ref: c1/staging/c-api}
+            """
+        ),
+        encoding="utf-8",
+    )
+    vault = Vault.create_empty("pass")
+    for ref in ("c1/staging/a-api", "c1/staging/b-api", "c1/staging/c-api"):
+        vault.set(ref, Credential(user="u", password="p"))
+    opened = []
+
+    def factory(profile):
+        opened.append(profile.db_host)
+        return FakeForwarder()
+
+    tunnels = TunnelManager(tmp_path / "keys", forwarder_factory=factory)
+    monkeypatch.setattr(
+        server, "_state", server._State(config.load_config(), vault, Catalog.load(reg), tunnels)
+    )
+    monkeypatch.setattr(executor, "_connect", lambda *a, **k: FakeConn(FakeCursor(["x"], [(1,)])))
+
+    for svc in ("a-api", "b-api", "c-api"):
+        assert isinstance(server._run_query("c1", "staging", svc, "SELECT 1", None), QueryResult)
+    # c-api reuses a-api's tunnel (same host); b-api gets its own
+    assert opened == ["db-a", "db-b"]
 
 
 def test_main_fails_without_passphrase(tmp_path, monkeypatch):
